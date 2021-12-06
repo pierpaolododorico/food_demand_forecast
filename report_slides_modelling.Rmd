@@ -1,0 +1,143 @@
+---
+title: "Food Demand Forecast"
+subtitle: "Business, Economic and Financial Data Project"
+author: "Pierpaolo D'Odorico, Massimiliano Conte and Eddie Rossi"
+output: beamer_presentation
+theme: "Berlin"
+colortheme: "beaver"
+fonttheme: "professionalfonts"
+header-includes:
+  - \setbeamercolor{structure}{fg=darkred}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(knitr)
+library(tidyverse)
+library(ggplot2)
+library(ggcorrplot)
+centers = read.csv("data/fulfilment_center_info.csv")
+meals = read.csv("data/meal_info.csv")
+sales = read.csv("data/train.csv")
+```
+
+``` {r, echo = F, results = 'asis'}
+# Create unique dataset
+X = merge(sales, centers, by = "center_id")
+X = merge(X, meals,by = "meal_id")
+```
+
+# Modelling
+
+Since we want to organize the goods for each specific fulflment center, we need to forecast the demand for each specific center. Moreover, we also need to stratify for each unique meal, since each of them requires a different set of raw materials. 
+We propose a two-stage approach:
+
+- First we account for the temporal relationship using the linear model, obtaining (hopefully) i.i.d. residuals
+- Then we model the obtained residuals, using some flexible method such as the gradient boosting
+
+# Linear model
+
+We want to fit a straight line, between demand and time, for each combination of center and meal. This mean we should fit $N^ocenters \cdot N^omeals \ (77 \cdot 51 = 3927)$ linear models. But if we carefully craft some indicator variables we can specify all the simple linear models in to one single big linear model.
+
+# Linear model
+
+$$Y_{ij} = \beta_{0ij} + \beta_{1ij}week + \mathcal{E}_{ij}$$  $$\forall i=1,...,77; j=1,...,51$$
+
+Is equivalent to:
+
+$$ Y = \beta_{0} + \beta_{1}week + X_{ind} \beta_{level} +  X_{ind}\beta_{slope}\cdot week + \mathcal{E}$$
+
+# Linear model
+
+where $X_{ind}$ is a vector with $51 \cdot77 - 1 = 3926$ columns, and is obtained as the interaction between the dummy expansion of the categorical variables center_id and meal_id. 
+
+The model has $1 + 1 + 3926 + 3926 = 7854$ scalar parameters, that in the simple formulation there are 2 parameters for each model, so $2 \cdot77 \cdot 51 = 7854$
+
+# Validation set and Test set
+
+Dealing with time series data means that standard cross validation is not a viable option, since it breack the temporal dependency. We instead reserved a validation set, taking the last set of observations. The test set are the next 10 week, and the true number of orders stands on Kaggle.
+
+# Validation set and Test set
+
+```{r, out.width="80%", fig.align='center'}
+meal_feature = as.factor(X$meal_id)
+center_feature =as.factor(X$center_id)
+week = X$week
+y = X$num_orders
+ln_y = log(y)
+
+val_idx = which(week > 130)
+ggplot(data.frame(x = 1:145), aes(x=unique(week),
+                      y=y[X$center_id==77 & X$meal_id ==1062])) +
+  geom_line(color="darkred") + 
+  xlab("Week") + ylab("Num Orders") +
+  geom_vline(xintercept = 110, linetype="dashed", 
+                color = "darkblue", size=1) +
+  annotate(geom="text", x=60, y=450, label="Training set",
+              color="darkblue", fontface =2, size = 5) + 
+  annotate(geom="text", x=130, y=450, label="Validation set",
+              color="darkblue", fontface =2, size = 5)
+```
+
+# Regularization
+
+We added elastic-net regularization in the estimation process:
+
+$$\hat{\beta} = arg\min_{\beta \in \mathbb{R}^p}\left( \sum_{i=1}^n(y_i - x_i^T \beta)^2 + \lambda \sum_{j=1}^p\left( \frac{1}{2}(1-\alpha)\beta_j^2 + \alpha |\beta_j| \right) \right)$$
+
+# No regularization is needed
+
+
+```{r, eval=T, out.width="80%", fig.align='center'}
+Design_matrix = Matrix::sparse.model.matrix( ~ week + meal_feature*center_feature + week*meal_feature*center_feature)
+lin_model = glmnet::glmnet(Design_matrix, y, subset = -val_idx, 
+                   alpha = 0.8, lambda = c(0, 0.01, 0.1, 1))
+loglin_model = glmnet::glmnet(Design_matrix, ln_y, subset = -val_idx, 
+                   alpha = 0.8, lambda = c(0, 0.01, 0.1, 1))
+
+y_bar = mean(y[-val_idx])
+dummy_val_rmse = sqrt(mean((y_bar - y[val_idx])^2))
+dummy_val_mae = mean(abs(y_bar - y[val_idx]))
+
+lin_val_rmse = rep(0, 4)
+loglin_val_rmse = rep(0, 4)
+lin_val_mae = rep(0, 4)
+loglin_val_mae = rep(0, 4)
+for(i in 1:4){
+  predicted = glmnet::predict.glmnet(lin_model, newx = Design_matrix[val_idx,],s = lin_model$lambda[i])
+  lin_val_rmse[i] = sqrt(mean((predicted - y[val_idx])^2))
+  lin_val_mae[i] = mean(abs(predicted - y[val_idx]))
+}
+for(i in 1:4){
+  predicted = exp(glmnet::predict.glmnet(loglin_model, newx = Design_matrix[val_idx,],s = lin_model$lambda[i]) )
+  loglin_val_rmse[i] = sqrt(mean((predicted- y[val_idx])^2))
+  loglin_val_mae[i] = mean(abs(predicted - y[val_idx]))
+}
+
+plot(log(lin_model$lambda +0.00001), lin_val_rmse, pch = 16, col="gray",
+     ylab = "Validation RMSE", xlab = expression(log(lambda)),
+     main = "Error vs regularization strenght", cex = 2)
+grid(lwd = 3)
+lines(log(lin_model$lambda +0.00001), lin_val_rmse, col ="darkred",lwd=2)
+abline(v=log(0.00001), col="darkblue", lty = 2, lwd = 2)
+```
+
+# Results on validation set
+
+```{r, eval=T, echo = F}
+kable(data.frame(Model = c("Mean", "LM", "LM on ln(y)"), 
+
+                 RMSE = c(dummy_val_rmse, lin_val_rmse[1], loglin_val_rmse[1]),
+                 MAE = c(dummy_val_mae, lin_val_mae[1], loglin_val_mae[1])
+                 ))
+```
+
+
+
+
+
+
+
+
+
+

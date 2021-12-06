@@ -1,0 +1,551 @@
+---
+title: "Food Demand Forecast"
+subtitle: "Business, Economic and Financial Data Project"
+author: "Pierpaolo D'Odorico, Massimiliano Conte and Eddie Rossi"
+output: beamer_presentation
+theme: "Berlin"
+colortheme: "beaver"
+fonttheme: "professionalfonts"
+header-includes:
+  - \setbeamercolor{structure}{fg=darkred}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(knitr)
+library(tidyverse)
+library(ggplot2)
+library(ggcorrplot)
+centers = read.csv("../data/fulfilment_center_info.csv")
+meals = read.csv("../data/meal_info.csv")
+sales = read.csv("../data/train.csv")
+```
+
+# Food Demand Forecasting
+
+## **The business problem:**
+
+A **meal delivery company** operates in multiple cities. They have various **fulfillment centers** in these cities for dispatching **meal orders** to their customers.
+
+We need to **forecast** for upcoming weeks, so that these centers will **plan the stock** of raw materials accordingly.
+
+## **Task:**
+
+**Predict the demand** for the next **10 weeks**!
+
+# Data sources
+
+Data are collected in 3 different datasets, connected by keys.
+
+## Datasets
+
+- Fulfilment centers data
+- Meal info data
+- Sales historical data
+
+# Fulfilment centers data
+
+```{r, echo = F, results = 'asis'}
+kable(head(centers,6)) 
+```
+
+# Fulfilment centers data features
+
+## **Variables:**
+
+- **center_id**: Fulfilment identifier
+- **city_code**: City id in which the center is located on
+- **region_code**: Region id in which the center is located on
+- **center_type**: Type of the center
+- **op_area**: Size of the operational area
+
+## **Unique values in dataset:**
+
+```{r, eval = F, echo = F, results = 'asis'}
+for (col in seq(length(colnames(centers)))){
+  cat(colnames(centers)[col],": ")
+  cat(dim(unique(centers[col]))[1])
+  if (length(colnames(centers)) != col) cat(",  ")
+}
+```
+
+- **center_id**: 77
+- **city_code**: 51
+- **region_code**: 8
+- **center_type**: 3
+
+# Meal info data
+```{r, echo = F, results = 'asis'}
+kable(head(meals,6)) 
+```
+
+# Meal data features
+
+## **Variables:**
+
+- **meal_id**: Meal identifier
+- **category**: Category of food
+- **cuisine**: Category of cuisine
+
+## **Unique values in dataset:**
+- **category**: 14
+- **cuisine**: 4
+```{r, eval = F, echo = F, results = 'asis'}
+for (col in seq(length(colnames(meals)))){
+  cat(colnames(meals)[col],": ")
+  cat(dim(unique(meals[col]))[1])
+  if (length(colnames(meals)) != col) cat(",  ")
+}
+```
+
+# Sales info data
+```{r, echo = F, results = 'asis'}
+kable(head(sales[,1:5],4))
+```
+
+```{r, echo = F, results = 'asis'}
+sales_2 <- sales
+names(sales_2)[names(sales_2) == 'emailer_for_promotion'] <- 'email'
+names(sales_2)[names(sales_2) == 'homepage_featured'] <- 'homepage'
+kable(head(sales_2[,-(2:5)],4))
+```
+
+
+# Sales data features
+
+## **Variables:**
+
+- **id**: Id of the single transaction
+- **week**: Temporal variable, we have 145 unique weeks
+- **center_id**: Fulfilment identifier
+- **meal_id**: Meal identifier
+- **checkout_price**: Paid price for the product
+- **base_price**: Full price of the product without promotion
+- **emailer_for_promotion**: Binomial, promotion email or not
+- **homepage_featured**: Binomial, product on web homepage
+- **num_orders**: Number of orders for the meal and center
+
+# Sales data features
+
+## **Unique values in dataset:**
+
+- **week**: 145
+- **center_id**: 77
+- **meal_id**: 51
+- **emailer_for_promotion**: 2
+- **homepage_featured**: 2
+
+```{r, eval = F, echo = F, results = 'asis'}
+for (col in seq(length(colnames(sales)))){
+  cat(colnames(sales)[col],": ")
+  cat(dim(unique(sales[col]))[1])
+  if (length(colnames(sales)) != col) cat(",  ")
+}
+```
+
+# Create a unique dataset
+
+We created a unique dataset **merging by keys**.
+
+There are **0 NA's** in the complete dataset.
+
+We will perform some exploratory data analysis:
+
+- **Time series Exploration**: First look at time series behaviour
+- **Univariate Analysis**: Looking at single variables behaviour
+- **Multivariate Analysis**: Correlation between variables
+
+``` {r, echo = F, results = 'asis'}
+# Create unique dataset
+X = merge(sales, centers, by = "center_id")
+X = merge(X, meals,by = "meal_id")
+```
+
+# Time series Exploratory Analysis
+
+In this business problem we deal with **$77$ centers** and **$51$ meals** for each center. We plot a random chosen series:
+
+```{r, include=FALSE}
+# aggregate by center
+aggregate_c <- function(center, dataset) {
+  " Given the center_id and dataset returns the mean orders from the center ts"
+  t1 = dataset[dataset$center_id==center, c(4,9)]
+  t2 = aggregate(num_orders ~ week, t1, mean)
+  t3 = t2[order(t2$week),]
+  return(t3)
+}
+
+# aggregate by meal
+aggregate_m <- function(meal, dataset) {
+  " Given the center_id and dataset returns the mean orders from the center ts"
+  t1 = dataset[dataset$meal_id==meal, c(4,9)]
+  t2 = aggregate(num_orders ~ week, t1, mean)
+  t3 = t2[order(t2$week),]
+  return(t3)
+}
+
+plot_single_ts <- function(c_id, m_id, dataset) {
+  title = paste("Orders of meal", m_id ,"in center" , c_id)
+  ggplot(X[X$meal_id ==m_id & X$center_id == c_id,], aes(x=week, y=num_orders)) +
+        xlab("week") + ggtitle(title) + geom_line(color="darkred") +
+        ylab("Number of orders") + theme_classic(base_size = 15)}
+```
+
+```{r, echo = F, results = 'asis',out.width="65%", fig.align = 'center'}
+plot_single_ts(m_id = 2826, c_id = 102, X)
+```
+
+# Time series Exploratory Analysis
+
+Some other **examples** of time series:
+```{r, echo = F, results = 'asis',out.width="70%", fig.align = 'center'}
+library(cowplot)
+a = plot_single_ts(m_id = 1062, c_id = 77, X)
+b = plot_single_ts(m_id = 1109, c_id = 89, X)
+c = plot_single_ts(m_id = 1778, c_id = 106, X)
+d = plot_single_ts(m_id = 2306, c_id = 77, X)
+plot_grid(a, b,c,d, nrow=2, label_size = 12, ncol = 2)
+```
+
+# Time series Exploratory Analysis
+
+For looking to the **main trend** in the whole data we plot the **total number of orders** series.
+
+```{r, echo = F, results = 'asis', out.width="65%", fig.align = 'center'}
+ggplot(aggregate(num_orders ~ week, X, sum), aes(x=week, y=num_orders)) +
+       xlab("Week") + ggtitle("Total orders for each week") + geom_line(color="darkred") +
+       ylab("Number of orders") + theme_classic(base_size = 17)
+```
+# Time series Exploratory Analysis
+
+Since we do **not** notice a **main trend** during weeks we will make some **analysis on data** that **doesn't involve** the **time dependence**. 
+
+With this assumption we can explore **variables behaviour** regardless of the week involved.
+
+# Univariate Analysis on numerical variables
+
+**Number of orders** boxplot vs log transformation for a better view:
+```{r, echo = F, results = 'asis', out.height="50%" ,out.width="60%", fig.align = 'center'}
+par(mfrow = c(1,2))
+boxplot(X$num_orders, main = "Number of orders", xlab ="Number of orders",col = "darkred", horizontal=TRUE, cex = 1.5)
+boxplot(log(X$num_orders), main = "Log scaled number of orders", xlab ="Number of orders", col = "darkred", horizontal=TRUE, cex = 1.5)
+par(mfrow = c(1,1))
+```
+
+High **number of orders** are related to some specific series from a specific center and meal with high demand. For this reason we don't consider them outliers.
+
+# Univariate Analysis on numerical variables
+
+We look at density of the numerical variables:
+
+```{r, echo = F, out.width="80%", fig.align='center'}
+par(mfrow = c(1,3))
+hist(X$checkout_price, col = "darkred", border = "white",xlab = "Price paid", 
+     main = "Checkout price", breaks = 8, probability = T, cex = 3)
+hist(X$base_price, col = "darkred", border = "white",xlab = "Initial price ", 
+     main = "Base price", breaks = 8, probability = T, cex = 3)
+hist(X$op_area, col = "darkred", border = "white",xlab = "Operational area size", 
+     main = "Size of the center", breaks = 8, probability = T, cex = 3)
+#hist(log(X$num_order), col = "darkred", border = "white",xlab = "log(num_orders)", 
+#     main = "num_orders density", breaks = 10, probability = T)
+par(mfrow = c(1,1))
+```
+
+# Univariate Analysis on categorical variables
+
+We look at the region where centers are located
+
+```{r, echo = F, out.width="65%", fig.align='center'}
+sums = rep(0,8)
+names = levels(factor(centers$region_code))
+for (i in 1:8) {
+  sums[i] = sum(centers[, "region_code"] == names[i])
+}
+names = paste("Region", names)
+heights = sums/nrow(centers)
+b = barplot(names = names , height = heights, 
+        col = c("darkred"),
+        xlab = "Location",
+        ylab = "% of the total centers",
+        main = "Region where the centers are locate",
+        ylim = c(0,0.45),
+        cex.main=2)
+text(b,heights,labels=sums, adj=c(0.5, -0.5))
+```
+
+# Univariate Analysis on categorical variables
+
+We have A, B and C center type.
+
+```{r, echo = F, out.width="55%", fig.align='center'}
+sums = c(0,0,0)
+names = c("A", "B", "C")
+for (i in 1:3) {
+  sums[i] = sum(centers[, "center_type"] == paste("TYPE_", names[i], sep = ""))
+}
+heights = sums/nrow(centers)
+b = barplot(names = names , height = heights, 
+        col = c("darkred"),
+        xlab = "Centers type",
+        ylab = "% of the total centers",
+        main = "Fulfilment centers type",
+        ylim = c(0,0.65),
+        cex.main=2)
+text(b,heights,labels=sums, adj=c(0.5, -0.5))
+```
+
+# Univariate Analysis on categorical variables
+
+```{r, echo = F, out.width="85%", fig.align='center'}
+ggplot(X, aes(x=category)) + ggtitle("Category of food of the order") +
+  geom_bar(aes(y = (..count..)/sum(..count..)), fill = "darkred") + 
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  scale_y_continuous(labels=scales::percent) + ylab("% of the total orders") + 
+  theme_classic(base_size = 17) + xlab("Category of food") +
+  geom_text(aes( label=paste(as.character(round((..count..)/sum(..count..)*100)),"%",sep = ""),
+                 y= (..count..)/sum(..count..) ), stat= "count", vjust = -.3)
+```
+
+
+# Univariate Analysis on categorical variables
+
+```{r, echo = F, out.width="80%", fig.align='center'}
+ggplot(X, aes(x=cuisine)) + ggtitle("Category of cousine of the order") +
+  geom_bar(aes(y = (..count..)/sum(..count..)), fill = "darkred") + 
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  scale_y_continuous(labels=scales::percent) + ylab("relative frequencies") + 
+  theme_classic(base_size = 17) + ylab("% of the total orders") + xlab("Cuisine") +
+  geom_text(aes( label=paste(as.character(round((..count..)/sum(..count..)*100)),"%",sep = ""),
+                 y= (..count..)/sum(..count..) ), stat= "count", vjust = -.3)
+```
+
+# Univariate Analysis on categorical variables
+
+```{r, echo = F, out.width="80%", fig.align='center'}
+X_2 <- X
+
+email_vector <-factor(X$emailer_for_promotion)
+levels(email_vector) <- c("No Email", "Email")
+homepage_vector <-factor(X$homepage_featured)
+levels(homepage_vector) <- c("No Homepage", "Homepage")
+
+X_2$email_vector <- email_vector
+X_2$homepage_vector <- homepage_vector
+
+p1 <- ggplot(X_2, aes(x=email_vector)) + ggtitle("Type of email promotion") +
+  geom_bar(aes(y = (..count..)/sum(..count..)), fill = "darkred") + 
+  scale_x_discrete(guide = guide_axis(angle = 30)) +
+  scale_y_continuous(labels=scales::percent) + ylab("% of the total orders") + xlab(" ") +
+  theme_classic(base_size = 17) +
+  geom_text(aes( label=paste(as.character(round((..count..)/sum(..count..)*100)),"%",sep = ""), y= (..count..)/sum(..count..) ), stat= "count", vjust = -.3)
+
+p2 <- ggplot(X_2, aes(x=homepage_vector)) + ggtitle("Presence in website homepage") +
+  geom_bar(aes(y = (..count..)/sum(..count..)), fill = "darkred") + 
+  scale_x_discrete(guide = guide_axis(angle = 30)) +
+  scale_y_continuous(labels=scales::percent) + 
+  theme_classic(base_size = 17) + ylab("% of the total orders") + xlab("  ") +
+  geom_text(aes( label=paste(as.character(round((..count..)/sum(..count..)*100)),"%",sep = ""),
+                 y= (..count..)/sum(..count..) ), stat= "count", vjust = -.3)
+
+plot_grid(p1, p2, label_size = 12)
+```
+
+# Multivariate Analysis, correlation plot
+
+```{r, echo = F, out.width="55%", fig.align='center'}
+library(ggcorrplot)
+corr = cor(X[, c(4,5,6,9,13)])
+ggcorrplot(corr, hc.order = TRUE, outline.col = "white", 
+           colors = c("blue", "white", "darkred"), lab = TRUE) +
+  ggtitle("Correlations between numerical variables")
+```
+The **number of orders** is not highly correlated with other numerical variables.
+
+
+# Multivariate Analysis, numerical variables
+
+```{r, echo = F, out.width="60%", fig.align='center'}
+p1 = ggplot(X, aes(x=checkout_price, y=num_orders)) + geom_point(color = "darkred") + ggtitle("Checkout Price vs Orders") + theme_classic(base_size = 17) +
+  ylab("Number of orders") + xlab("Checkout Price") + coord_cartesian(ylim=c(0,16000)) + geom_smooth(formula = y ~ x, method="glm", color = "black")
+p2 = ggplot(X, aes(x=base_price, y=num_orders)) + geom_point(color = "darkred") +  ggtitle("Base Price vs Orders") + theme_classic(base_size = 17) +
+  ylab("Number of orders") + xlab("Base Price") + coord_cartesian(ylim=c(0,16000)) + geom_smooth(formula = y ~ x, method="glm", color = "black")
+plot_grid(p1, p2, label_size = 15)
+```
+We decided to **remove Checkout Price** due to the nature of the variable, in a **real case scenario** we can't have a checkout price because checkout means that the order is confirmed.
+
+
+# Multivariate Analysis, numerical variables
+
+```{r, echo = F, out.width="80%", fig.align='center'}
+ggplot(X,aes(x=op_area,y=num_orders))+ggtitle("Center Area vs Orders") + geom_point(color = "darkred") + theme_classic(base_size = 17) +
+coord_cartesian(ylim=c(0,16000)) + geom_smooth(formula = y ~ x, method="glm", color = "black") + ylab("Number of orders") + xlab("Operational Area") 
+```
+Number of orders seems to **lightly increase** for bigger area centers.
+
+# Multivariate Analysis, categorical variables
+
+
+```{r, echo = F, out.width="80%", fig.align='center'}
+ggplot(X, aes(x=center_type, y=log(num_orders))) + geom_boxplot(color="darkred", fill="red", alpha=0.2) + 
+  theme(legend.title = element_blank(), legend.position = "none") + ggtitle("Center Type vs Log Orders") + theme_classic(base_size = 17) +
+   ylab("Log number of orders") + xlab("Center Type") 
+```
+
+# Multivariate Analysis, categorical variables
+
+```{r, echo = F, out.width="80%", fig.align='center'}
+ggplot(X, aes(x=category, y=log(num_orders))) + geom_boxplot(color="darkred", fill="red", alpha=0.2) + 
+  scale_x_discrete(guide = guide_axis(angle = 60)) +
+  theme() + ggtitle("Category vs Log Orders")+ theme_classic(base_size = 17) +
+  ylab("Log number of orders") + xlab("Food Category") 
+```
+
+# Multivariate Analysis, categorical variables
+
+
+```{r, echo = F, out.width="80%", fig.align='center'}
+ggplot(X, aes(x=cuisine, y=log(num_orders))) +
+  geom_boxplot(color="darkred", fill="red", alpha=0.2) + ggtitle("Cuisine vs Log Orders")+ theme_classic(base_size = 17) + ylab("Log number of orders") + xlab("Cuisine Category") 
+```
+
+# Multivariate Analysis, categorical variables
+
+```{r, echo = F, out.width="70%", fig.align='center'}
+X$emailer_for_promotion = as.factor(X$emailer_for_promotion) # convert binomial into factor
+X$homepage_featured = as.factor(X$homepage_featured) # convert binomial into factor
+p1 = ggplot(X_2, aes(x=email_vector, y=log(num_orders))) +
+  scale_x_discrete(guide = guide_axis(angle = 30)) +geom_boxplot(color="darkred", fill="red", alpha=0.2) + theme(legend.title = element_blank(), legend.position = "none") +
+  ggtitle("Email vs Log Orders") + theme_classic(base_size = 14) +
+  ylab("Log number of orders") + xlab("Email for Promotion") 
+
+
+p2 = ggplot(X_2, aes(x=homepage_vector, y=log(num_orders))) + geom_boxplot(color="darkred", fill="red", alpha=0.2) + theme(legend.title = element_blank(), legend.position = "none") +
+  scale_x_discrete(guide = guide_axis(angle = 30)) +
+  ggtitle("Homepage vs Log Orders") + theme_classic(base_size = 14) +
+  ylab("Log number of orders") + xlab("Meal in Homepage") 
+plot_grid(p1, p2, label_size = 12)
+```
+Promotions ad emails seem to **increase** the number of orders.
+
+# Modelling
+
+Since we want to organize the goods for each specific fulflment center, we need to forecast the demand for each specific center. Moreover, we also need to stratify for each unique meal, since each of them requires a different set of raw materials. 
+We propose a two-stage approach:
+
+- First we account for the temporal relationship using the linear model, obtaining (hopefully) i.i.d. residuals
+- Then we model the obtained residuals, using some flexible method such as the gradient boosting
+
+# Linear model
+
+We want to fit a straight line, between demand and time, for each combination of center and meal. This mean we should fit $N^ocenters \cdot N^omeals \ (77 \cdot 51 = 3927)$ linear models. But if we carefully craft some indicator variables we can specify all the simple linear models in to one single big linear model.
+
+# Linear model
+
+$$Y_{ij} = \beta_{0ij} + \beta_{1ij}week + \mathcal{E}_{ij}$$  $$\forall i=1,...,77; j=1,...,51$$
+
+Is equivalent to:
+
+$$ Y = \beta_{0} + \beta_{1}week + X_{ind} \beta_{level} +  X_{ind}\beta_{slope}\cdot week + \mathcal{E}$$
+
+# Linear model
+
+where $X_{ind}$ is a vector with $51 \cdot77 - 1 = 3926$ columns, and is obtained as the interaction between the dummy expansion of the categorical variables center_id and meal_id. 
+
+The model has $1 + 1 + 3926 + 3926 = 7854$ scalar parameters, that in the simple formulation there are 2 parameters for each model, so $2 \cdot77 \cdot 51 = 7854$
+
+
+
+# Validation set and Test set
+
+Dealing with time series data means that standard cross validation is not a viable option, since it breack the temporal dependency. We instead reserved a validation set, taking the last set of observations. The test set are the next 10 week, and the true number of orders stands on Kaggle.
+
+# Validation set and Test set
+
+```{r eval=F, include=FALSE}
+=======
+```{r, out.width="80%", fig.align='center'}
+meal_feature = as.factor(X$meal_id)
+center_feature =as.factor(X$center_id)
+week = X$week
+y = X$num_orders
+ln_y = log(y)
+
+val_idx = which(week > 130)
+ggplot(data.frame(x = 1:145), aes(x=unique(week),
+                      y=y[X$center_id==77 & X$meal_id ==1062])) +
+  geom_line(color="darkred") + 
+  xlab("Week") + ylab("Num Orders") +
+  geom_vline(xintercept = 110, linetype="dashed", 
+                color = "darkblue", size=1) +
+  annotate(geom="text", x=60, y=450, label="Training set",
+              color="darkblue", fontface =2, size = 5) + 
+  annotate(geom="text", x=130, y=450, label="Validation set",
+              color="darkblue", fontface =2, size = 5)
+```
+
+# Regularization
+We added elastic-net regularization in the estimation process:
+
+$$\hat{\beta} = arg\min_{\beta \in \mathbb{R}^p}\left( \sum_{i=1}^n(y_i - x_i^T \beta)^2 + \lambda \sum_{j=1}^p\left( \frac{1}{2}(1-\alpha)\beta_j^2 + \alpha |\beta_j| \right) \right)$$
+
+# No regularization is needed
+
+
+```{r, eval=T, out.width="80%", fig.align='center'}
+Design_matrix = Matrix::sparse.model.matrix( ~ week + meal_feature*center_feature + week*meal_feature*center_feature)
+lin_model = glmnet::glmnet(Design_matrix, y, subset = -val_idx, 
+                   alpha = 0.8, lambda = c(0, 0.01, 0.1, 1))
+loglin_model = glmnet::glmnet(Design_matrix, ln_y, subset = -val_idx, 
+                   alpha = 0.8, lambda = c(0, 0.01, 0.1, 1))
+
+y_bar = mean(y[-val_idx])
+dummy_val_rmse = sqrt(mean((y_bar - y[val_idx])^2))
+dummy_val_mae = mean(abs(y_bar - y[val_idx]))
+
+lin_val_rmse = rep(0, 4)
+loglin_val_rmse = rep(0, 4)
+lin_val_mae = rep(0, 4)
+loglin_val_mae = rep(0, 4)
+for(i in 1:4){
+  predicted = glmnet::predict.glmnet(lin_model, newx = Design_matrix[val_idx,],s = lin_model$lambda[i])
+  lin_val_rmse[i] = sqrt(mean((predicted - y[val_idx])^2))
+  lin_val_mae[i] = mean(abs(predicted - y[val_idx]))
+}
+for(i in 1:4){
+  predicted = exp(glmnet::predict.glmnet(loglin_model, newx = Design_matrix[val_idx,],s = lin_model$lambda[i]) )
+  loglin_val_rmse[i] = sqrt(mean((predicted- y[val_idx])^2))
+  loglin_val_mae[i] = mean(abs(predicted - y[val_idx]))
+}
+
+plot(log(lin_model$lambda +0.00001), lin_val_rmse, pch = 16, col="gray",
+     ylab = "Validation RMSE", xlab = expression(log(lambda)),
+     main = "Error vs regularization strenght", cex = 2)
+grid(lwd = 3)
+lines(log(lin_model$lambda +0.00001), lin_val_rmse, col ="darkred",lwd=2)
+abline(v=log(0.00001), col="darkblue", lty = 2, lwd = 2)
+```
+
+
+<<<<<<< HEAD
+```{r, echo = F, eval = F}
+kable(data.frame(model = c("Mean", "LM", "LM on ln(y)"), 
+=======
+
+# Results on validation set
+
+```{r, eval=T, echo = F}
+kable(data.frame(Model = c("Mean", "LM", "LM on ln(y)"), 
+
+                 RMSE = c(dummy_val_rmse, lin_val_rmse[1], loglin_val_rmse[1]),
+                 MAE = c(dummy_val_mae, lin_val_mae[1], loglin_val_mae[1])
+                 ))
+```
+
+
+
+
+
+
+
+
+

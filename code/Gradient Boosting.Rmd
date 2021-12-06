@@ -1,0 +1,120 @@
+---
+title: "Food Demand Forecast"
+subtitle: "Business, Economic and Financial Data Project"
+author: "Pierpaolo D'Odorico, Massimiliano Conte and Eddie Rossi"
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(knitr)
+library(tidyverse)
+library(ggplot2)
+library(ggcorrplot)
+centers = read.csv("./data/fulfilment_center_info.csv")
+meals = read.csv("./data/meal_info.csv")
+sales = read.csv("./data/train.csv")
+```
+
+# slide 1
+
+Qui c'è il codice necessario a far girare il markdown ma che dovrebbe essere già presente nel markdown principale
+
+```{r}
+
+X = merge(sales, centers, by = "center_id")
+X = merge(X, meals,by = "meal_id")
+head(X)
+colnames(X)
+
+X$meal_id = as.factor(X$meal_id)
+X$center_id = as.factor(X$center_id)
+X$emailer_for_promotion = as.factor(X$emailer_for_promotion)
+X$homepage_featured = as.factor(X$homepage_featured)
+X$city_code = as.factor(X$city_code)
+X$region_code = as.factor(X$region_code)
+X$center_type = as.factor(X$center_type)
+X$category = as.factor(X$category)
+X$cuisine = as.factor(X$cuisine)
+
+#### parte presa da Massimiliano
+Design_matrix = Matrix::sparse.model.matrix( ~ X$week + X$meal_id*X$center_id + X$week*X$meal_id*X$center_id)
+lin_model = glmnet::glmnet(Design_matrix, X$num_orders)
+predicted = glmnet::predict.glmnet(lin_model, newx = Design_matrix, type = "response", s = 0)
+####
+
+week = X$week
+val_idx = which(X$week > 130)
+X = X[,-c(3,4,5)] # "id", "checkout_price", "week"
+residuals = X$num_orders - predicted
+X$residuals = residuals # add residuals
+
+X_train = X[-val_idx,]
+X_val = X[val_idx,]
+```
+
+
+# Residuals linear regression
+
+```{r}
+plot(week, residuals)
+```
+
+
+# Gradient Boosting
+
+We're going to apply GB to predict the proper **number of orders** using the residuals of the linear model as a new predictors.
+
+```{r}
+colnames(X)
+```
+
+
+# Training
+
+```{r, echo = F, out.width="80%", fig.align='center'}
+library (gbm)
+
+# Hyperparameters
+n_trees = 10
+depth_tree = 1
+
+# Training
+m1 = gbm(num_orders ~ ., data=X_train, distribution="gaussian",
+       n.trees=n_trees, interaction.depth=depth_tree)
+
+# Prediction for validation set
+predicted_GB = predict(m1, newdata = X_val, n.trees=1:n_trees)
+
+# Compute MSE on prediction
+err = apply(predicted_GB, 2, function(pred) mean((X_val$num_orders - pred)^2))
+
+# Plot train vs validation MSE
+plot(m1$train.error, type="l", ylim = c(0,150000), xlab='Number of trees', ylab='MSE')
+lines(err, type="l", col=2)
+```
+
+
+# Relative influence plot
+
+```{r, echo = F, out.width="80%", fig.align='center'}
+# Add more space on the left
+mai.old <- par()$mai
+mai.new <- mai.old
+mai.new[2] <- 2.1 
+par(mai=mai.new)
+summary(m1, las=1, cBar=10)
+# Back to original configuration
+par(mai=mai.old)
+```
+
+
+# Marginal effects
+
+```{r, echo = F, out.width="80%", fig.align='center'}
+par(mfrow=c(2,2))
+plot(m1, i.var=3, n.trees = n_trees) # base_price
+plot(m1, i.var=5, n.trees = n_trees) # homepage_feature
+plot(m1, i.var=9, n.trees = n_trees) # op_area
+plot(m1, i.var=12, n.trees = n_trees) # residuals
+par(mfrow=c(1,1))
+```
